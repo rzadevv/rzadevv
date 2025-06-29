@@ -31,29 +31,6 @@ Always eager to learn and grow through new challenges.
 
 ---
 
-## 📌 Selected Projects
-
-### 🧠 Multi-Class 3D CNN Brain Classifier (2025 – Present)
-- Designed and trained 3D CNN models (ResNet-3D, DenseNet-3D, Inception-3D, ViT-3D)
-- Classified brain CT scans into IS, ICH, Mixed, or Normal categories
-
-### ♟️ Deep Learning Gomoku Engine (BSc Thesis)
-- Built a dual-headed Residual CNN with attention & dilation blocks
-- Achieved 59% accuracy on unseen game states with real-time inference
-
-### 🖐️ HandMouse – Vision-Based Cursor Control
-- Real-time hand gesture control using OpenCV (pinch-click, V-sign)
-- Customizable GUI for gesture-based interaction
-
-### 🍽️ AI Recipe Recommender
-- GPT-3.5 powered recipe generator with real-time feedback and dietary filters
-
-### 💍 Wedding Planner (Ongoing)
-- Event planning web app using Spring Boot & PostgreSQL
-- Features include RSVP tracking, guest list, and task management
-
----
-
 ## 🌐 Languages
 
 - 🇦🇿 Azerbaijani – Native  
