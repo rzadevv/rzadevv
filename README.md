@@ -13,9 +13,9 @@
 I’m a curious developer who loves transforming real-world problems into reliable data-driven solutions.  
 With hands-on experience in Python, Java, and deep learning frameworks, I specialize in:  
 
-- 🧠 Building AI/ML and Data Science models  
-- ⚙️ Developing scalable backend systems  
-- 🔍 Applying computer vision to interactive tools  
+-  Building AI/ML and Data Science models  
+-  Developing scalable backend systems  
+-  Applying computer vision to interactive tools  
 
 I’m always eager to learn, experiment, and take on new challenges.  
 
