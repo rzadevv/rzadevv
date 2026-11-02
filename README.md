@@ -1,46 +1,13 @@
-# 👋 Hi, I'm Rza Mirzayev  
+# Hey, i'm rza.
 
-🎓 **Master’s Student in Computer Science** at TU Dresden  
-💻 Passionate about **Data Science** & **Machine Learning**  
-📍 Dresden, Germany  
-📫 [rzamirzayevedu@gmail.com](mailto:rzamirzayevedu@gmail.com)  
-🔗 [GitHub Profile](https://github.com/rzadevv)  
+I spend a lot of time teaching computers to see things, and even more time trying to figure out what they see.
 
----
+Currently doing my master's in CS at TU Dresden and working on computational pathology and model interpretability at NCT Dresden.
 
-##  About Me  
+I like Table Tennis 🏓
 
-I’m a curious developer who loves transforming real-world problems into reliable data-driven solutions.  
-With hands-on experience in Python, Java, and deep learning frameworks, I specialize in:  
+Based in Dresden. [Say hi](mailto:rzamirzayevedu@gmail.com).
 
--  Building AI/ML and Data Science models  
--  Developing scalable backend systems  
--  Applying computer vision to interactive tools  
-
-I’m always eager to learn, experiment, and take on new challenges.  
-
----
-
-##  Tech Stack  
-
-- **Languages**: Python, Java, SQL, C#, HTML/CSS  
-- **Frameworks**: Spring Boot, PyTorch, TensorFlow, Keras, OpenCV  
-- **Databases**: PostgreSQL, MS SQL  
-- **Tools**: Git, Docker, Maven, MLflow  
-- **Core Skills**: Data Science, Machine Learning, Data Structures, OOP, Design Patterns, Algorithms  
-
----
-
-## 🌐 Languages  
-
-- 🇦🇿 Azerbaijani – Native  
-- 🇬🇧 English – Fluent  
-- 🇹🇷 Turkish – Fluent  
-- 🇩🇪 German – Basic  
-
----
-
-> _“I am trying something.”_  
-
-Thanks for stopping by!
-
+<p align="center">
+  <img src="koi/koi.gif" width="256" alt="My koi">
+</p>
