@@ -1,6 +1,6 @@
 # Hey, i'm rza.
 
-I spend a lot of time teaching computers to see things, and even more time trying to figure out what they see.
+I spend time doing stuff on computers :)
 
 Currently doing my master's in CS at TU Dresden and working on computational pathology and model interpretability at NCT Dresden.
 
