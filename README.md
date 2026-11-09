@@ -6,7 +6,7 @@ Currently doing my master's in CS at TU Dresden and working on computational pat
 
 I like Table Tennis 🏓
 
-Based in Dresden. [Say hi](mailto:rzamirzayevedu@gmail.com).
+Based in Dresden, Germany. [Say hi](mailto:rzamirzayevedu@gmail.com).
 
 <p align="center">
   <img src="koi/koi.gif" width="256" alt="My koi">
