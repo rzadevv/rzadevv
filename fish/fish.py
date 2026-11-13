@@ -35,12 +35,12 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE / "fish.gif"
 STATE = HERE / "state.json"
 
-CW, CH = 704, 288
+CW, CH = 800, 288
 F = 120
 FRAME_MS = 70
 SUB = 4
-CX, CY = 352, 144
-PA, PB = CW / 2 - 16, CH / 2 - 14      # pond half-width/height (rounded rectangle)
+CX, CY = 400, 144
+PA, PB = CW / 2 - 4, CH / 2 - 4        # edge of the water (rounded rectangle), used for winter frost
 N_FRY = 10
 
 HEX = """181425 262b44 3a4466 5a6988 8b9bb4 c0cbdc ffffff 124e89 0099db 2ce8f5
@@ -192,7 +192,7 @@ class Day:
 
 # ------------------------------------------------------------------ motion --
 
-WAYPOINTS = np.array([(-262, -78), (0, 0), (262, 78), (262, -78), (0, 0), (-262, 78)], float) + (CX, CY)
+WAYPOINTS = np.array([(-318, -92), (0, 0), (318, 92), (318, -92), (0, 0), (-318, 92)], float) + (CX, CY)
 _PATHS = {}
 
 
@@ -330,7 +330,7 @@ def simulate(day):
                     hidden[k] = True
                 if f == (te + 16) % F:
                     hidden[k] = False
-                    fry[k] = np.array([CX + 300 * (1 if mouth[0] < CX else -1), CY + rng.uniform(-40, 40)])
+                    fry[k] = np.array([CX + 380 * (1 if mouth[0] < CX else -1), CY + rng.uniform(-40, 40)])
                     vel[k] = unit(np.array([CX, CY]) - fry[k]) * 3.5
             else:
                 if te - 6 <= f < te - 2:                        # nearly...
@@ -539,21 +539,20 @@ class Pond:
         self.rng = rng
         self.rim = np.full((CH, CW), -1, int)
         self.under = np.full((CH, CW), -1, int)
-        self._build_rim()
-        self._submerged(CX - 150, CY + 92)
+        self._submerged(CX - 170, CY + 96)
         self.pads = [(CX + 120, CY - 100, 16, rng.uniform(0, 6)), (CX + 98, CY - 112, 8, rng.uniform(0, 6)),
                      (CX - 96, CY + 102, 13, rng.uniform(0, 6))]
-        self.leaves = [(CX + rng.uniform(-270, 270), CY + rng.uniform(-90, 90), rng.uniform(3, 6),
+        self.leaves = [(CX + rng.uniform(-330, 330), CY + rng.uniform(-90, 90), rng.uniform(3, 6),
                         rng.uniform(0, 6), int(rng.choice([-1, 1])), int(rng.integers(0, 3))) for _ in range(4)]
         self.flakes = [(rng.uniform(0, CW), rng.uniform(0, CH), rng.uniform(0, 6)) for _ in range(20)]
         self.drips = [(int(rng.uniform(0, F)), self.inside(rng)) for _ in range(3)]
-        self.hook = np.array([CX + rng.uniform(-200, 200), CY + rng.uniform(-60, 60)])
+        self.hook = np.array([CX + rng.uniform(-260, 260), CY + rng.uniform(-60, 60)])
         self.ice = np.zeros((CH, CW), bool)
         if day.season == "winter":
             yy, xx = np.mgrid[0:CH, 0:CW]
             rn = self.rnorm(xx, yy)
             n = vnoise(day.seed + 5, xx / 8.0, yy / 8.0)
-            self.ice = (rn < .985) & (rn > .93 - .06 * n)
+            self.ice = (rn < 1.0) & (rn > .94 - .06 * n)
 
     def inside(self, rng):
         return np.array([CX + rng.uniform(-.75, .75) * PA, CY + rng.uniform(-.65, .65) * PB])
@@ -701,8 +700,8 @@ class Pond:
                     img[yi, xi] = C["c0cbdc"]
 
         if d.season == "summer":                                  # a dragonfly skimming the water
-            p = np.array([CX + 240 * math.sin(tc * 2 + .6), CY - 96 + 12 * math.sin(tc * 3)])
-            v = unit(np.array([480 * math.cos(tc * 2 + .6), 36 * math.cos(tc * 3)]))
+            p = np.array([CX + 300 * math.sin(tc * 2 + .6), CY - 96 + 12 * math.sin(tc * 3)])
+            v = unit(np.array([600 * math.cos(tc * 2 + .6), 36 * math.cos(tc * 3)]))
             for k in range(7):
                 q = p - v * k
                 img[int(q[1]), int(q[0])] = C["0099db"] if k else C["124e89"]
