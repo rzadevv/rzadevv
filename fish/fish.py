@@ -36,7 +36,7 @@ OUT = HERE / "fish.gif"
 STATE = HERE / "state.json"
 
 CW, CH = 800, 288
-F = 120
+F = 160
 FRAME_MS = 70
 SUB = 4
 CX, CY = 400, 144
@@ -156,6 +156,69 @@ def ring(img, c, r, color, density=1.0, seed=0):
 
 # ------------------------------------------------------------------ config --
 
+class Chase:
+    """The story of one curious fry.
+
+    It wanders off from the school towards the bottom-right corner. The big fish
+    comes round the corner, spots it, and chases it up the right side; the fry
+    zigzags ahead of the jaws and dives under a lily pad just in time. The fish
+    snaps at empty water and swims on; the fry peeks out and sneaks home.
+    Everything is a function of the frame, so the loop stays seamless.
+    """
+
+    def __init__(self, dash):
+        T, _, _, _ = _path(dash)
+        k = 240
+        t_br, t_tr = T[2 * k] % F, T[3 * k] % F
+        self.notice = int(round(t_br - 14))
+        self.hide = int(round((t_br + t_tr) / 2 + 3))
+        self.snap = self.hide + 3
+        self.out = self.hide + 30
+        self.home = self.out + 46
+        hp = head_at(self.snap + 3, dash)
+        self.pad = hp + unit(np.array([CX, CY]) - hp) * 14         # right in its path
+
+        def route(t):
+            return head_at(t, dash)
+
+        def chase_pos(f):
+            q = (f - self.notice) / (self.hide - self.notice)
+            t = f + 13 - 8 * q                                   # the gap closes
+            d = unit(route(t + .5) - route(t - .5))
+            return route(t) + perp(d) * 7 * math.sin((f - self.notice) * .9)
+
+        def ease(q):
+            return .5 - .5 * math.cos(math.pi * min(max(q, 0.0), 1.0))
+
+        start, dive_from = chase_pos(self.notice), chase_pos(self.hide)
+        school = np.array([CX, CY]) + unit(self.pad - (CX, CY)) * 55
+        peek = self.pad + unit(school - self.pad) * 15
+        pos, hidden, alert = np.zeros((F, 2)), np.zeros(F, bool), np.zeros(F, bool)
+        for f in range(self.notice, self.notice + F):
+            if f <= self.hide:
+                p = chase_pos(f)
+            elif f <= self.hide + 4:
+                p = dive_from + (self.pad - dive_from) * ease((f - self.hide) / 4)
+            elif f <= self.out:
+                p = self.pad.copy()
+            elif f <= self.out + 8:
+                p = self.pad + (peek - self.pad) * ease((f - self.out) / 8)
+            elif f <= self.out + 16:
+                p = peek.copy()                                  # is it gone?
+            elif f <= self.home:
+                p = peek + (school - peek) * ease((f - self.out - 16) / (self.home - self.out - 16))
+            else:                                                # drifts off again, nosing about
+                q = (f - self.home) / (self.notice + F - self.home)
+                p = school + (start - school) * ease(q)
+                p = p + np.array([math.sin(q * 9), math.cos(q * 7)]) * 10 * math.sin(math.pi * q)
+            g = f % F
+            pos[g] = p
+            hidden[g] = self.hide + 3 <= f <= self.out
+            alert[g] = self.notice <= f <= self.notice + 10
+        self.pos, self.hidden, self.alert = pos, hidden, alert
+        self.vel = (np.roll(pos, -1, 0) - np.roll(pos, 1, 0)) / 2
+
+
 class Day:
     """Everything that varies from day to day."""
 
@@ -172,6 +235,8 @@ class Day:
         centres = tuple(_path(self.dash)[3])
         self.eats = () if self.mood == "resting" else centres
         self.catches = {"resting": set(), "hunting": {centres[0]}, "feasting": set(centres)}[self.mood]
+        self.chase = Chase(self.dash)
+        self.snaps = list(self.eats) + [self.chase.snap]
         if event is None:
             h = self.seed % 100
             event = "golden" if h < 6 else "heron" if h < 12 else "hook" if h < 18 else ""
@@ -251,9 +316,9 @@ def follow_biased(pts, base, seg, bias, k):
 
 def heron_at(f):
     """Centre of the heron's shadow, frames 34-86, else None."""
-    if not 34 <= f <= 86:
+    if not 45 <= f <= 115:
         return None
-    q = (f - 34) / 52
+    q = (f - 45) / 70
     return np.array([-110 + q * (CW + 220), 70 + q * 110])
 
 
@@ -300,17 +365,26 @@ def simulate(day):
                 if hidden[k]:
                     continue
                 acc = .03 * (target(k, t) - fry[k]) - .11 * vel[k]
-                for src, rad, power in ((mouth, 85, 1.8), (heron, 130, 1.2)):
+                for src, rad, power in ((mouth, 115, 2.2), (heron, 130, 1.2)):
                     if src is None:
                         continue
                     d = fry[k] - src
                     dist = np.linalg.norm(d) + 1e-9
                     if dist < rad:
                         acc += d / dist * power * (1 - dist / rad) ** 2
+                        if src is mouth:                        # fountain: split to either side of the fish
+                            side = 1 if fwd[0] * d[1] - fwd[1] * d[0] > 0 else -1
+                            acc += perp(fwd) * side * 1.6 * (1 - dist / rad) ** 2
+                for j in range(N_FRY):                          # personal space
+                    if j != k and not hidden[j]:
+                        d = fry[k] - fry[j]
+                        dist = np.linalg.norm(d)
+                        if 0 < dist < 8:
+                            acc += d / dist * .35 * (1 - dist / 8)
                 vel[k] += acc / SUB * 4
                 sp = np.linalg.norm(vel[k])
-                if sp > 4.5:
-                    vel[k] *= 4.5 / sp
+                if sp > 5.5:
+                    vel[k] *= 5.5 / sp
                 fry[k] += vel[k] / SUB
         fwd = unit(body[0] - body[1])
         mouth = body[0] + fwd * 7 * S
@@ -496,8 +570,8 @@ def draw_fish(fr, f, day, glints):
         if 0 <= gy < CH and 0 <= gx < CW:
             img[gy, gx] = C["ffffff"]
 
-    # mouth opens before each strike
-    for te in day.eats:
+    # mouth opens before each strike, and at the lily pad
+    for te in day.snaps:
         if 0 <= te - f <= 4:
             gape = 1 - (te - f) / 5
             ys, xs, u, s = tube(body[:6], lambda u: body_radius(u * 5 / 25))
@@ -540,7 +614,8 @@ class Pond:
         self.rim = np.full((CH, CW), -1, int)
         self.under = np.full((CH, CW), -1, int)
         self._submerged(CX - 170, CY + 96)
-        self.pads = [(CX + 120, CY - 100, 16, rng.uniform(0, 6)), (CX + 98, CY - 112, 8, rng.uniform(0, 6)),
+        hp = day.chase.pad
+        self.pads = [(hp[0], hp[1], 18, rng.uniform(0, 6)), (CX + 98, CY - 112, 8, rng.uniform(0, 6)),
                      (CX - 96, CY + 102, 13, rng.uniform(0, 6))]
         self.leaves = [(CX + rng.uniform(-330, 330), CY + rng.uniform(-90, 90), rng.uniform(3, 6),
                         rng.uniform(0, 6), int(rng.choice([-1, 1])), int(rng.integers(0, 3))) for _ in range(4)]
@@ -624,8 +699,9 @@ class Pond:
         d = self.day
         tc = 2 * math.pi * f / F
         events = [(te, rec[te]["mouth"]) for te in d.eats] + self.drips
+        events += [(d.chase.hide + 3, d.chase.pad), (d.chase.snap, rec[d.chase.snap]["mouth"])]
         if d.event == "hook":
-            events += [(t0, self.hook.copy()) for t0 in (0, 60)]
+            events += [(t0, self.hook.copy()) for t0 in (0, 80)]
         for t0, p in events:
             age = (f - t0) % F
             if age < 24:
@@ -644,6 +720,11 @@ class Pond:
             if self.ice[int(cy), int(cx)]:
                 continue
             a = a0 + .1 * math.sin(tc + i)
+            if i == 0:                                           # the hiding pad shakes
+                for t0, amp in ((d.chase.hide + 3, .25), (d.chase.snap, .45)):
+                    age = (f - t0) % F
+                    if age < 18:
+                        a += amp * math.exp(-age / 5) * math.sin(age * 1.9)
             pts = [(cx, cy)] + [(cx + r * math.cos(a + .4 + (2 * math.pi - .8) * k / 24),
                                  cy + r * math.sin(a + .4 + (2 * math.pi - .8) * k / 24)) for k in range(25)]
             m = poly_mask(pts)
@@ -771,7 +852,7 @@ def text(img, s, x, y, color, scale=1):
 
 # ------------------------------------------------------------------ build --
 
-def draw_fry(img, fr, f):
+def draw_fry(img, fr, f, ramp=None):
     fmask, tm, paint = np.zeros((CH, CW), bool), np.zeros((CH, CW), bool), []
     for k, (p, v) in enumerate(zip(fr["fry"], fr["fvel"])):
         if fr["hidden"][k]:
@@ -782,7 +863,9 @@ def draw_fry(img, fr, f):
         root = p - d * 10 + n * wag * 1.5
         ys, xs, u, sv = tube([p + d * 3, p - d * 4, root], lambda u: 3.3 - 2.0 * u)
         L = .45 + .55 * np.sqrt(np.clip(1 - sv * sv, 0, 1)) - .2 * sv
-        col = shade(L, R("3a4466", "5a6988", "8b9bb4", "c0cbdc"), ys, xs)
+        r = ramp or (R("5a6988", "8b9bb4", "c0cbdc", "ffffff") if np.linalg.norm(v) > 3.4   # panic flash
+                     else R("3a4466", "5a6988", "8b9bb4", "c0cbdc"))
+        col = shade(L, r, ys, xs)
         tail = [root - d * 4 + n * (3.5 + wag), root - d * 4 - n * (3.5 - wag)]
         paint.append((ys, xs, col, p + d * 2 + n * 1.4, tail, root))
         fmask[ys, xs] = True
@@ -834,6 +917,14 @@ def build(day, out=OUT):
         b = rec[t0]["body"]
         side = perp(unit(b[0] - b[1])) * (1 if t0 % 2 else -1)
         bubbles.append(dict(t=t0, p=b[3] + side * 12 * day.S, v=side * .45, r=1, life=20, ph=rng.uniform(0, 6)))
+    ch = day.chase
+    fwd = unit(rec[ch.snap]["body"][0] - rec[ch.snap]["body"][1])
+    for i in range(4):
+        bubbles.append(dict(t=ch.snap + i % 2, p=rec[ch.snap]["mouth"] + rng.normal(0, 2, 2),
+                            v=rot(fwd, rng.uniform(-1.2, 1.2)) * rng.uniform(.4, .9),
+                            r=1, life=int(rng.integers(10, 16)), ph=rng.uniform(0, 6)))
+    speeds = [np.linalg.norm(rec[(f + 1) % F]["body"][0] - rec[f - 1]["body"][0]) / 2 for f in range(F)]
+    wake_from = float(np.percentile(speeds, 62))
     glints = [(rng.uniform(.2, .85), rng.uniform(-.8, .8), rng.uniform(0, 6))
               for _ in range(40 if day.event == "golden" else 16)]
     label = day.label()
@@ -849,7 +940,23 @@ def build(day, out=OUT):
         yy, xx = np.nonzero(sh & ~fmask)
         keep = (yy + xx) % 2 == 0
         img[yy[keep], xx[keep]] = C["262b44"]
+        # wake: a V of ripples behind the head while it dashes
+        h0, h1 = rec[(f - 1) % F]["body"][0], rec[(f + 1) % F]["body"][0]
+        speed = np.linalg.norm(h1 - h0) / 2
+        if speed > wake_from:
+            fwd = unit(fr["body"][0] - fr["body"][1])
+            for side in (-1, 1):
+                dirv = rot(-fwd, side * .42)
+                for k in range(3, 22):
+                    if (k + f) % 3 == 0:
+                        q = fr["body"][0] + fwd * 6 + dirv * k * 2.2
+                        x, y = int(q[0]), int(q[1])
+                        if 0 <= x < CW and 0 <= y < CH and img[y, x] < 0:
+                            img[y, x] = C["3a4466"] if k < 14 else C["262b44"]
         draw_fry(img, fr, f)
+        ch = day.chase
+        draw_fry(img, dict(fry=ch.pos[f:f + 1], fvel=ch.vel[f:f + 1], hidden=ch.hidden[f:f + 1]), f,
+                 ramp=R("3a4466", "733e39", "c28569", "e8b796"))
         draw_bubbles(img, f, bubbles)
         img[fmask] = fimg[fmask]
         fwd = unit(fr["body"][0] - fr["body"][1])
@@ -861,6 +968,17 @@ def build(day, out=OUT):
                     dv = rot(fwd, math.radians(a))
                     line(img, m + dv * r0, m + dv * r1, C["ffffff"] if a % 90 == 0 else C["fee761"])
         pond.surface(img, f, rec)
+        if ch.alert[f]:                                          # "!"
+            x, y = int(ch.pos[f][0]), int(ch.pos[f][1]) - 14
+            hop = 1 if (f - ch.notice) % 4 < 2 else 0
+            px = [(0, 0), (0, 1), (0, 2), (0, 3), (0, 5)]
+            m = np.zeros((CH, CW), bool)
+            for dx, dy in px:
+                for ox in (0, 1):
+                    if 0 <= y + dy - hop < CH and 0 <= x + dx + ox < CW:
+                        m[y + dy - hop, x + dx + ox] = True
+            img[dilate(m) & ~m] = OUTLINE
+            img[m] = C["fee761"]
         pond.sky(img, f)
         im = Image.fromarray(np.where(img < 0, 255, img).astype(np.uint8), "P")
         im.putpalette(pal)
