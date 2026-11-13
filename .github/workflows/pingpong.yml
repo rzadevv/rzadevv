@@ -1,0 +1,54 @@
+name: Ping pong
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+# One rally at a time, so two simultaneous issues never fight over state.json.
+concurrency:
+  group: pingpong
+  cancel-in-progress: false
+
+jobs:
+  play:
+    if: startsWith(github.event.issue.title, 'pingpong:')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Play the shot
+        id: play
+        env:
+          # Issue text is untrusted input: pass it through env, never inline it in the script.
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_USER: ${{ github.event.issue.user.login }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          set +e
+          result="$(python3 pingpong/game.py move | tail -n 1)"
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+
+      - name: Commit the new frame
+        run: |
+          git add pingpong/state.json assets/pingpong.svg
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --quiet -m "pingpong: rally from issue #${{ github.event.issue.number }}"
+          git pull --rebase --quiet
+          git push --quiet
+
+      - name: Reply and close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ steps.play.outputs.result }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          msg="$(printf '%s' "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"])')"
+          gh issue comment "$NUMBER" --body "$msg Go back to the profile and refresh to see the rally."
+          gh issue close "$NUMBER" --reason completed
