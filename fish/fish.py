@@ -35,11 +35,12 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE / "fish.gif"
 STATE = HERE / "state.json"
 
-CW, CH = 512, 288
+CW, CH = 704, 288
 F = 120
 FRAME_MS = 70
 SUB = 4
-CX, CY, AX, AY = 256, 142, 158, 70
+CX, CY = 352, 144
+PA, PB = CW / 2 - 16, CH / 2 - 14      # pond half-width/height (rounded rectangle)
 N_FRY = 10
 
 HEX = """181425 262b44 3a4466 5a6988 8b9bb4 c0cbdc ffffff 124e89 0099db 2ce8f5
@@ -168,8 +169,9 @@ class Day:
         self.mood = "resting" if contrib == 0 else "hunting" if contrib <= 5 else "feasting"
         self.width = {"resting": 1.0, "hunting": 1.0, "feasting": 1.06}[self.mood]
         self.dash = .1 if self.mood == "resting" else .32
-        self.eats = () if self.mood == "resting" else (F // 4, 3 * F // 4)
-        self.catches = {"resting": set(), "hunting": {F // 4}, "feasting": set(self.eats)}[self.mood]
+        centres = tuple(_path(self.dash)[3])
+        self.eats = () if self.mood == "resting" else centres
+        self.catches = {"resting": set(), "hunting": {centres[0]}, "feasting": set(centres)}[self.mood]
         if event is None:
             h = self.seed % 100
             event = "golden" if h < 6 else "heron" if h < 12 else "hook" if h < 18 else ""
@@ -190,10 +192,40 @@ class Day:
 
 # ------------------------------------------------------------------ motion --
 
+WAYPOINTS = np.array([(-262, -78), (0, 0), (262, 78), (262, -78), (0, 0), (-262, 78)], float) + (CX, CY)
+_PATHS = {}
+
+
+def _path(dash):
+    """Closed Catmull-Rom loop through the waypoints, timed so the fish slows into
+    the corners and dashes through the middle. Returns (times, xs, ys, centre times)."""
+    if dash in _PATHS:
+        return _PATHS[dash]
+    P, m, k = WAYPOINTS, len(WAYPOINTS), 240
+    pts = []
+    for i in range(m):
+        p0, p1, p2, p3 = P[i - 1], P[i], P[(i + 1) % m], P[(i + 2) % m]
+        for j in range(k):
+            t = j / k
+            pts.append(.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t
+                             + (-p0 + 3 * p1 - 3 * p2 + p3) * t ** 3))
+    pts = np.array(pts + [pts[0]])
+    ds = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+    mid = (pts[:-1] + pts[1:]) / 2
+    dc = np.linalg.norm(mid - (CX, CY), axis=1)
+    dk = np.min([np.linalg.norm(mid - c, axis=1) for c in WAYPOINTS[[0, 2, 3, 5]]], axis=0)
+    v = 1 + 2.2 * dash * np.exp(-(dc / 80) ** 2) - .3 * np.exp(-(dk / 70) ** 2)
+    T = np.concatenate([[0], np.cumsum(ds / v)])
+    T *= F / T[-1]
+    centres = sorted(int(round(T[i * k])) % F for i in (1, 4))
+    _PATHS[dash] = (T, pts[:, 0], pts[:, 1], centres)
+    return _PATHS[dash]
+
+
 def head_at(t, dash=.32):
-    u = (t - F / 4) / F
-    th = 2 * math.pi * u + dash * math.sin(4 * math.pi * u)
-    return np.array([CX + AX * math.sin(th), CY + AY * math.sin(2 * th)])
+    T, xs, ys, _ = _path(dash)
+    t = t % F
+    return np.array([np.interp(t, T, xs), np.interp(t, T, ys)])
 
 
 def head_pos(t, day):
@@ -298,7 +330,7 @@ def simulate(day):
                     hidden[k] = True
                 if f == (te + 16) % F:
                     hidden[k] = False
-                    fry[k] = np.array([CX + 215 * (1 if mouth[0] < CX else -1), CY + rng.uniform(-40, 40)])
+                    fry[k] = np.array([CX + 300 * (1 if mouth[0] < CX else -1), CY + rng.uniform(-40, 40)])
                     vel[k] = unit(np.array([CX, CY]) - fry[k]) * 3.5
             else:
                 if te - 6 <= f < te - 2:                        # nearly...
@@ -490,38 +522,41 @@ class Pond:
     Everything inside is muted so the fish is the only bright thing.
     """
 
-    PRX, PRY = 236, 126            # pond radius (to the middle of the rim)
+    @staticmethod
+    def rim_point(th, k=1.0):
+        """Point on the rounded-rectangle rim (a superellipse) at angle th."""
+        c, sn = math.cos(th), math.sin(th)
+        return np.array([CX + PA * k * math.copysign(abs(c) ** .5, c),
+                         CY + PB * k * math.copysign(abs(sn) ** .5, sn)])
+
+    @staticmethod
+    def rnorm(x, y):
+        return ((np.abs(x - CX) / PA) ** 4 + (np.abs(y - CY) / PB) ** 4) ** .25
 
     def __init__(self, day):
         self.day = day
         rng = np.random.default_rng(day.seed + 11)
         self.rng = rng
-        a1, a2 = rng.uniform(0, 6, 2)
-        self.shape = lambda th: 1 + .05 * math.sin(3 * th + a1) + .03 * math.sin(5 * th + a2)
         self.rim = np.full((CH, CW), -1, int)
         self.under = np.full((CH, CW), -1, int)
         self._build_rim()
-        self._submerged(CX + self.PRX * .78, CY + self.PRY * .55)
-        # two pads and a small one, near the rim, away from the fish's path
-        self.pads = [(CX + 168, CY - 66, 16, rng.uniform(0, 6)), (CX + 146, CY - 84, 8, rng.uniform(0, 6)),
-                     (CX - 176, CY + 60, 13, rng.uniform(0, 6))]
-        self.leaves = [(CX + rng.uniform(-170, 170), CY + rng.uniform(-90, 90), rng.uniform(3, 6),
-                        rng.uniform(0, 6), int(rng.choice([-1, 1])), int(rng.integers(0, 3))) for _ in range(3)]
-        self.flakes = [(rng.uniform(0, CW), rng.uniform(0, CH), rng.uniform(0, 6)) for _ in range(16)]
-        self.drips = [(int(rng.uniform(0, F)), self.inside(rng)) for _ in range(2)]
-        self.hook = np.array([rng.uniform(170, 340), rng.uniform(100, 190)])
+        self._submerged(CX - 150, CY + 92)
+        self.pads = [(CX + 120, CY - 100, 16, rng.uniform(0, 6)), (CX + 98, CY - 112, 8, rng.uniform(0, 6)),
+                     (CX - 96, CY + 102, 13, rng.uniform(0, 6))]
+        self.leaves = [(CX + rng.uniform(-270, 270), CY + rng.uniform(-90, 90), rng.uniform(3, 6),
+                        rng.uniform(0, 6), int(rng.choice([-1, 1])), int(rng.integers(0, 3))) for _ in range(4)]
+        self.flakes = [(rng.uniform(0, CW), rng.uniform(0, CH), rng.uniform(0, 6)) for _ in range(20)]
+        self.drips = [(int(rng.uniform(0, F)), self.inside(rng)) for _ in range(3)]
+        self.hook = np.array([CX + rng.uniform(-200, 200), CY + rng.uniform(-60, 60)])
         self.ice = np.zeros((CH, CW), bool)
         if day.season == "winter":
             yy, xx = np.mgrid[0:CH, 0:CW]
-            th = np.arctan2((yy - CY) / self.PRY, (xx - CX) / self.PRX)
-            rr = np.hypot((xx - CX) / self.PRX, (yy - CY) / self.PRY)
-            edge = np.vectorize(self.shape)(th)
+            rn = self.rnorm(xx, yy)
             n = vnoise(day.seed + 5, xx / 8.0, yy / 8.0)
-            self.ice = (rr < edge) & (rr > edge - .045 - .085 * n)
+            self.ice = (rn < .985) & (rn > .93 - .06 * n)
 
     def inside(self, rng):
-        a, r = rng.uniform(0, math.tau), rng.uniform(.2, .75)
-        return np.array([CX + self.PRX * r * math.cos(a), CY + self.PRY * r * math.sin(a)])
+        return np.array([CX + rng.uniform(-.75, .75) * PA, CY + rng.uniform(-.65, .65) * PB])
 
     def _stone(self, layer, cx, cy, rx, ry, ramp, light=.62):
         pts = []
@@ -540,35 +575,34 @@ class Pond:
     def _build_rim(self):
         rng = self.rng
         ramp = R("181425", "262b44", "3a4466", "5a6988", "8b9bb4")
-        big = set(rng.uniform(0, math.tau, 4).round(1))
-        th = 0.0
-        while th < math.tau:
-            k = self.shape(th)
-            n = vnoise(self.day.seed + 21, th * 3, 1.5)
+        ths = np.linspace(0, math.tau, 3000)
+        pts = np.array([self.rim_point(t) for t in ths])
+        cum = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
+        total = cum[-1]
+        boulders = rng.uniform(0, total, 5)
+        pos = 0.0
+        while pos < total - 6:
+            i = int(np.searchsorted(cum, pos))
+            x, y = pts[min(i, len(pts) - 1)]
+            inward = unit(np.array([CX, CY]) - (x, y))
+            n = vnoise(self.day.seed + 21, pos / 40.0, 1.5)
             size = 5 + 8 * n + rng.uniform(-1, 1.5)
-            if any(abs(th - b) < .12 for b in big):
-                size = rng.uniform(14, 18)                       # a boulder
-            jitter = rng.uniform(-2.5, 2.5)
-            x = CX + (self.PRX * k + jitter) * math.cos(th)
-            y = CY + (self.PRY * k + jitter) * math.sin(th)
+            if np.min(np.abs(boulders - pos)) < 10:
+                size = rng.uniform(13, 17)
+            x, y = np.array([x, y]) + inward * rng.uniform(-2.5, 2.5)
             m = self._stone(self.rim, x, y, size, size * rng.uniform(.62, .85), ramp, light=.5)
-            if rng.random() < .25:                                # moss
+            if rng.random() < .25:
                 ys, xs = np.nonzero(m)
-                pick = rng.random(len(ys)) < .18
-                top = ys < y
-                self.rim[ys[pick & top], xs[pick & top]] = C["265c42"]
-            if rng.random() < .45:                                # a smaller stone in front
-                ins = rng.uniform(.5, .9) * size + 4
-                self._stone(self.rim, x - ins * math.cos(th), y - ins * math.sin(th) * .85,
-                            rng.uniform(2.5, 5.5), rng.uniform(2, 4), ramp, light=.55)
-            r_here = math.hypot(self.PRX * math.cos(th), self.PRY * math.sin(th))
-            th += (size * rng.uniform(1.2, 1.6)) / r_here
-        # reeds and grass outside the rim
-        for _ in range(7):
+                pick = (rng.random(len(ys)) < .18) & (ys < y)
+                self.rim[ys[pick], xs[pick]] = C["265c42"]
+            if rng.random() < .45:
+                q = np.array([x, y]) + inward * (rng.uniform(.5, .9) * size + 4)
+                self._stone(self.rim, q[0], q[1], rng.uniform(2.5, 5.5), rng.uniform(2, 4), ramp, light=.55)
+            pos += size * rng.uniform(1.2, 1.6)
+        for _ in range(9):                                          # reeds just outside the rim
             t = rng.uniform(0, math.tau)
-            k = self.shape(t) + .06
-            bx, by = CX + self.PRX * k * math.cos(t), CY + self.PRY * k * math.sin(t)
-            if not (4 < bx < CW - 4 and 6 < by < CH - 2):
+            bx, by = self.rim_point(t, 1.05)
+            if not (4 < bx < CW - 10 and 12 < by < CH - 2):
                 continue
             for j in range(4):
                 ang = -math.pi / 2 + rng.uniform(-.6, .6)
@@ -667,8 +701,8 @@ class Pond:
                     img[yi, xi] = C["c0cbdc"]
 
         if d.season == "summer":                                  # a dragonfly skimming the water
-            p = np.array([CX + 150 * math.sin(tc * 2 + .6), CY - 92 + 14 * math.sin(tc * 3)])
-            v = unit(np.array([300 * math.cos(tc * 2 + .6), 42 * math.cos(tc * 3)]))
+            p = np.array([CX + 240 * math.sin(tc * 2 + .6), CY - 96 + 12 * math.sin(tc * 3)])
+            v = unit(np.array([480 * math.cos(tc * 2 + .6), 36 * math.cos(tc * 3)]))
             for k in range(7):
                 q = p - v * k
                 img[int(q[1]), int(q[0])] = C["0099db"] if k else C["124e89"]
