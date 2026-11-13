@@ -84,8 +84,8 @@ LOTUS = R("68386c", "b55088", "f6757a", "ffffff")
 ICE = R("8b9bb4", "c0cbdc", "ffffff")
 
 STAGES = [  # (min streak, name, scale, fin length factor)
-    (0, "hatchling", .72, .9), (3, "young", .86, 1.0), (7, "adult", 1.0, 1.0),
-    (14, "elder", 1.08, 1.25), (30, "dragon", 1.14, 1.35)]
+    (0, "hatchling", .9, .85), (3, "young", .95, .95), (7, "adult", 1.0, 1.0),
+    (14, "elder", 1.05, 1.25), (30, "dragon", 1.12, 1.35)]
 
 BAYER = (np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]) + .5) / 16
 
@@ -164,10 +164,12 @@ class Day:
         for lo, name, scale, fins in STAGES:
             if streak >= lo:
                 self.stage, self.S, self.fins = name, scale, fins
-        self.mood = "hungry" if contrib == 0 else "fed" if contrib <= 5 else "feasting"
-        self.width = {"hungry": .86, "fed": 1.0, "feasting": 1.1}[self.mood]
-        self.eats = (F // 4, 3 * F // 4)
-        self.catches = {"hungry": set(), "fed": {self.eats[0]}, "feasting": set(self.eats)}[self.mood]
+        # a quiet day is a calm cruise, not a failed hunt
+        self.mood = "resting" if contrib == 0 else "hunting" if contrib <= 5 else "feasting"
+        self.width = {"resting": 1.0, "hunting": 1.0, "feasting": 1.06}[self.mood]
+        self.dash = .1 if self.mood == "resting" else .32
+        self.eats = () if self.mood == "resting" else (F // 4, 3 * F // 4)
+        self.catches = {"resting": set(), "hunting": {F // 4}, "feasting": set(self.eats)}[self.mood]
         if event is None:
             h = self.seed % 100
             event = "golden" if h < 6 else "heron" if h < 12 else "hook" if h < 18 else ""
@@ -188,17 +190,17 @@ class Day:
 
 # ------------------------------------------------------------------ motion --
 
-def head_at(t):
+def head_at(t, dash=.32):
     u = (t - F / 4) / F
-    th = 2 * math.pi * u + .32 * math.sin(4 * math.pi * u)
+    th = 2 * math.pi * u + dash * math.sin(4 * math.pi * u)
     return np.array([CX + AX * math.sin(th), CY + AY * math.sin(2 * th)])
 
 
 def head_pos(t, day):
-    p = head_at(t)
-    d = head_at(t + .5) - head_at(t - .5)
+    p = head_at(t, day.dash)
+    d = head_at(t + .5, day.dash) - head_at(t - .5, day.dash)
     sp = np.linalg.norm(d) + 1e-9
-    amp = (1.2 + .55 * sp) * (.7 if day.mood == "hungry" else 1.0)
+    amp = (1.2 + .55 * sp) * (.7 if day.mood == "resting" else 1.0)
     return p + perp(d) / sp * amp * math.sin(2 * math.pi * 18 * t / F)
 
 
@@ -232,7 +234,7 @@ def simulate(day):
     rng = np.random.default_rng(day.seed)
     body = np.array([head_at(0) - [i * seg, 0] for i in range(N)], float)
     tails = [np.repeat(body[-1:], 12, 0).astype(float) for _ in range(2)]
-    wl = 17 if day.stage == "dragon" else 13
+    wl = {"hatchling": 8, "young": 11, "dragon": 17}.get(day.stage, 13)
     whisk = [np.repeat(body[:1], n, 0).astype(float) for n in (wl, wl, 7, 7)]
     slots = [(rng.uniform(10, 44), rng.uniform(0, math.tau), int(rng.choice([-2, -1, 1, 2])),
               rng.uniform(.5, .8)) for _ in range(N_FRY)]
@@ -296,7 +298,7 @@ def simulate(day):
                     hidden[k] = True
                 if f == (te + 16) % F:
                     hidden[k] = False
-                    fry[k] = np.array([CX + (CW / 2 + 14) * (1 if mouth[0] < CX else -1), CY + rng.uniform(-60, 60)])
+                    fry[k] = np.array([CX + 215 * (1 if mouth[0] < CX else -1), CY + rng.uniform(-40, 40)])
                     vel[k] = unit(np.array([CX, CY]) - fry[k]) * 3.5
             else:
                 if te - 6 <= f < te - 2:                        # nearly...
@@ -414,7 +416,7 @@ def draw_fish(fr, f, day, glints):
              < 1 + .5 * (vnoise(day.seed + 1, u * 40, s * 4) - .5))
     col = np.where(crown, shade(L - .12, morph["crown"], ys, xs), col)
     pulse = np.exp(-((u - ((f / F * 3) % 1) * .62 - .16) / .05) ** 2)
-    dl = (np.abs(s + .06 * np.sin(u * 20 + f * .4)) < .11) & (u > .16) & (u < .8)
+    dl = (np.abs(s + .06 * np.sin(u * 20 + f * .4)) < .11) & (u > .16) & (u < .8) & (day.stage != "hatchling")
     col = np.where(dl, shade(.25 + .75 * pulse, morph["line"], ys, xs, .6), col)
     paint(ys, xs, col)
 
@@ -482,156 +484,212 @@ def draw_fish(fr, f, day, glints):
 # -------------------------------------------------------------- the pond --
 
 class Pond:
+    """A pond seen from straight above: a rim of stones around open water.
+
+    The water itself stays transparent, so the page behind it is the pond.
+    Everything inside is muted so the fish is the only bright thing.
+    """
+
+    PRX, PRY = 236, 126            # pond radius (to the middle of the rim)
+
     def __init__(self, day):
         self.day = day
         rng = np.random.default_rng(day.seed + 11)
         self.rng = rng
-        self.floor = np.full((CH, CW), -1, int)
-        for cx, cy, rx, ry in ((40, 196, 30, 19), (478, 64, 22, 15), (318, 22, 13, 8)):
-            self._rock(cx, cy, rx, ry)
-        for _ in range(9):
-            x = rng.uniform(10, CW - 10)
-            y = rng.uniform(230, 262) if rng.random() < .5 else rng.uniform(8, 30)
-            self._rock(x, y, rng.uniform(2.5, 4.5), rng.uniform(2, 3))
-        self.pads = [(468, 244, 25, rng.uniform(0, 6)), (494, 196, 13, rng.uniform(0, 6)),
-                     (38, 36, 21, rng.uniform(0, 6)), (74, 22, 11, rng.uniform(0, 6))]
-        self.drift = [(rng.uniform(20, CW - 20), rng.uniform(20, CH - 30), rng.uniform(3, 8),
-                       rng.uniform(0, 6), int(rng.choice([-1, 1])), int(rng.integers(0, 4))) for _ in range(7)]
-        self.flakes = [(rng.uniform(0, CW), rng.uniform(0, CH), rng.uniform(0, 6)) for _ in range(22)]
-        self.drips = [(int(rng.uniform(0, F)), np.array([rng.uniform(40, CW - 40), rng.uniform(30, CH - 40)]))
-                      for _ in range(3)]
-        self.hook = np.array([rng.uniform(150, 360), rng.uniform(90, 200)])
+        a1, a2 = rng.uniform(0, 6, 2)
+        self.shape = lambda th: 1 + .05 * math.sin(3 * th + a1) + .03 * math.sin(5 * th + a2)
+        self.rim = np.full((CH, CW), -1, int)
+        self.under = np.full((CH, CW), -1, int)
+        self._build_rim()
+        self._submerged(CX + self.PRX * .78, CY + self.PRY * .55)
+        # two pads and a small one, near the rim, away from the fish's path
+        self.pads = [(CX + 168, CY - 66, 16, rng.uniform(0, 6)), (CX + 146, CY - 84, 8, rng.uniform(0, 6)),
+                     (CX - 176, CY + 60, 13, rng.uniform(0, 6))]
+        self.leaves = [(CX + rng.uniform(-170, 170), CY + rng.uniform(-90, 90), rng.uniform(3, 6),
+                        rng.uniform(0, 6), int(rng.choice([-1, 1])), int(rng.integers(0, 3))) for _ in range(3)]
+        self.flakes = [(rng.uniform(0, CW), rng.uniform(0, CH), rng.uniform(0, 6)) for _ in range(16)]
+        self.drips = [(int(rng.uniform(0, F)), self.inside(rng)) for _ in range(2)]
+        self.hook = np.array([rng.uniform(170, 340), rng.uniform(100, 190)])
         self.ice = np.zeros((CH, CW), bool)
         if day.season == "winter":
             yy, xx = np.mgrid[0:CH, 0:CW]
-            n = vnoise(day.seed + 5, xx / 9.0, yy / 9.0)
-            d1 = np.hypot(xx, yy) / 95
-            d2 = np.hypot(xx - CW, yy - CH) / 110
-            self.ice = (np.minimum(d1, d2) + (n - .5) * .45) < 1
+            th = np.arctan2((yy - CY) / self.PRY, (xx - CX) / self.PRX)
+            rr = np.hypot((xx - CX) / self.PRX, (yy - CY) / self.PRY)
+            edge = np.vectorize(self.shape)(th)
+            n = vnoise(day.seed + 5, xx / 8.0, yy / 8.0)
+            self.ice = (rr < edge) & (rr > edge - .045 - .085 * n)
 
-    def _rock(self, cx, cy, rx, ry):
+    def inside(self, rng):
+        a, r = rng.uniform(0, math.tau), rng.uniform(.2, .75)
+        return np.array([CX + self.PRX * r * math.cos(a), CY + self.PRY * r * math.sin(a)])
+
+    def _stone(self, layer, cx, cy, rx, ry, ramp, light=.62):
         pts = []
-        for i in range(14):
-            a = 2 * math.pi * i / 14
-            r = 1 + self.rng.uniform(-.12, .1)
+        for i in range(12):
+            a = 2 * math.pi * i / 12
+            r = 1 + self.rng.uniform(-.1, .08)
             pts.append((cx + rx * r * math.cos(a), cy + ry * r * math.sin(a)))
         m = poly_mask(pts)
         ys, xs = np.nonzero(m)
-        L = .62 - .42 * ((xs - cx) / rx + (ys - cy) / ry) / 2 - .25 * ((ys - cy) / ry) ** 2
-        L = L + .3 * (vnoise(int(cx * 7 + cy), xs / 3.0, ys / 3.0) - .5)
-        self.floor[ys, xs] = shade(L, ROCK[1:], ys, xs, .7)
-        self.floor[dilate(m) & ~m] = OUTLINE
+        L = light - .4 * ((xs - cx) / rx + (ys - cy) / ry) / 2 - .2 * ((ys - cy) / ry) ** 2
+        L = L + .25 * (vnoise(int(cx * 7 + cy), xs / 3.0, ys / 3.0) - .5)
+        layer[ys, xs] = shade(L, ramp, ys, xs, .7)
+        layer[dilate(m) & ~m] = OUTLINE
+        return m
+
+    def _build_rim(self):
+        rng = self.rng
+        ramp = R("181425", "262b44", "3a4466", "5a6988", "8b9bb4")
+        big = set(rng.uniform(0, math.tau, 4).round(1))
+        th = 0.0
+        while th < math.tau:
+            k = self.shape(th)
+            n = vnoise(self.day.seed + 21, th * 3, 1.5)
+            size = 5 + 8 * n + rng.uniform(-1, 1.5)
+            if any(abs(th - b) < .12 for b in big):
+                size = rng.uniform(14, 18)                       # a boulder
+            jitter = rng.uniform(-2.5, 2.5)
+            x = CX + (self.PRX * k + jitter) * math.cos(th)
+            y = CY + (self.PRY * k + jitter) * math.sin(th)
+            m = self._stone(self.rim, x, y, size, size * rng.uniform(.62, .85), ramp, light=.5)
+            if rng.random() < .25:                                # moss
+                ys, xs = np.nonzero(m)
+                pick = rng.random(len(ys)) < .18
+                top = ys < y
+                self.rim[ys[pick & top], xs[pick & top]] = C["265c42"]
+            if rng.random() < .45:                                # a smaller stone in front
+                ins = rng.uniform(.5, .9) * size + 4
+                self._stone(self.rim, x - ins * math.cos(th), y - ins * math.sin(th) * .85,
+                            rng.uniform(2.5, 5.5), rng.uniform(2, 4), ramp, light=.55)
+            r_here = math.hypot(self.PRX * math.cos(th), self.PRY * math.sin(th))
+            th += (size * rng.uniform(1.2, 1.6)) / r_here
+        # reeds and grass outside the rim
+        for _ in range(7):
+            t = rng.uniform(0, math.tau)
+            k = self.shape(t) + .06
+            bx, by = CX + self.PRX * k * math.cos(t), CY + self.PRY * k * math.sin(t)
+            if not (4 < bx < CW - 4 and 6 < by < CH - 2):
+                continue
+            for j in range(4):
+                ang = -math.pi / 2 + rng.uniform(-.6, .6)
+                ln = rng.uniform(5, 10)
+                line(self.rim, (bx + j * 2 - 3, by), (bx + j * 2 - 3 + ln * math.cos(ang), by + ln * math.sin(ang)),
+                     C["3e8948"] if j % 2 else C["265c42"])
+
+    def _submerged(self, cx, cy):
+        """A sunken rock, drawn as a dithered silhouette: it reads as under water."""
+        m = poly_mask([(cx + 20 * math.cos(a) * (1 + .1 * math.sin(3 * a)), cy + 13 * math.sin(a))
+                       for a in np.linspace(0, math.tau, 14)])
+        yy, xx = np.nonzero(m)
+        keep = (yy + xx) % 2 == 0
+        self.under[yy[keep], xx[keep]] = C["262b44"]
 
     def floor_layer(self):
-        return self.floor.copy()
+        return self.under.copy()
 
     def surface(self, img, f, rec):
         d = self.day
         tc = 2 * math.pi * f / F
-        # ripples from strikes, drips and the bobber
         events = [(te, rec[te]["mouth"]) for te in d.eats] + self.drips
         if d.event == "hook":
-            events += [(t0, np.array([self.hook[0], 12.0])) for t0 in (0, 60)]
+            events += [(t0, self.hook.copy()) for t0 in (0, 60)]
         for t0, p in events:
             age = (f - t0) % F
-            if age < 26:
+            if age < 24:
                 for k, off in enumerate((0, 7)):
-                    r = 3 + (age - off) * 1.25
+                    r = 3 + (age - off) * 1.2
                     if r > 2:
-                        ring(img, p, r, C["8b9bb4"] if r < 18 else C["5a6988"], density=1 - age / 30, seed=t0 + k)
+                        ring(img, p, r, C["3a4466"] if r > 14 else C["5a6988"], density=1 - age / 28, seed=t0 + k)
 
         if d.season == "winter":
             ys, xs = np.nonzero(self.ice)
-            L = .55 + .35 * vnoise(d.seed + 9, xs / 5.0, ys / 5.0)
-            img[ys, xs] = shade(L, ICE, ys, xs, .9)
-            img[dilate(~self.ice) & self.ice] = C["5a6988"]
-            for a, b in (((8, 40), (38, 22)), ((22, 9), (46, 30)), ((CW - 10, CH - 46), (CW - 44, CH - 20))):
-                line(img, a, b, C["8b9bb4"])
+            img[ys, xs] = shade(.35 + .5 * vnoise(d.seed + 9, xs / 5.0, ys / 5.0), R("5a6988", "8b9bb4", "c0cbdc"), ys, xs, .9)
+            img[dilate(~self.ice) & self.ice & ~dilate(self.rim >= 0)] = C["5a6988"]
 
+        pad_ramp = R("193c3e", "265c42", "3e8948")
         for i, (cx, cy, r, a0) in enumerate(self.pads):
-            if self.ice[int(cy), int(min(cx, CW - 1))]:
+            if self.ice[int(cy), int(cx)]:
                 continue
-            a = a0 + .12 * math.sin(tc + i)
-            pts = [(cx, cy)]
-            for k in range(25):
-                ang = a + .45 + (2 * math.pi - .9) * k / 24
-                pts.append((cx + r * math.cos(ang), cy + r * .62 * math.sin(ang)))
+            a = a0 + .1 * math.sin(tc + i)
+            pts = [(cx, cy)] + [(cx + r * math.cos(a + .4 + (2 * math.pi - .8) * k / 24),
+                                 cy + r * math.sin(a + .4 + (2 * math.pi - .8) * k / 24)) for k in range(25)]
             m = poly_mask(pts)
             ys, xs = np.nonzero(m)
-            rr = np.hypot(xs - cx, (ys - cy) / .62) / r
-            ramp = PAD_AUTUMN if (d.season == "autumn" and i % 2 == 0) else PAD
-            img[ys, xs] = shade(.85 - .55 * rr + .06 * np.sin(np.arctan2(ys - cy, xs - cx) * 5), ramp, ys, xs, .7)
-            for k in range(5):
-                ang = a + .45 + (2 * math.pi - .9) * (k + .5) / 5
-                line(img, (cx, cy), (cx + r * .8 * math.cos(ang), cy + r * .5 * math.sin(ang)), ramp[1])
+            rr = np.hypot(xs - cx, ys - cy) / r
+            img[ys, xs] = shade(.9 - .5 * rr - .25 * ((xs - cx) + (ys - cy)) / (2 * r), pad_ramp, ys, xs, .6)
+            for k in range(6):
+                ang = a + .4 + (2 * math.pi - .8) * (k + .5) / 6
+                line(img, (cx, cy), (cx + r * .75 * math.cos(ang), cy + r * .75 * math.sin(ang)), C["193c3e"])
             img[dilate(m) & ~m] = OUTLINE
 
-        if d.season in ("spring", "summer"):
-            cx, cy = self.pads[0][0] - 4, self.pads[0][1] - 4
-            sz = 1.0 if d.season == "spring" else 1.35
+        if d.season in ("spring", "summer"):                     # one small flower on the big pad
+            cx, cy = self.pads[0][0] + 3, self.pads[0][1] + 2
             fm = np.zeros((CH, CW), bool)
-            for k in range(7):
-                ang = 2 * math.pi * k / 7 + .2 * math.sin(tc)
-                tip = (cx + 9 * sz * math.cos(ang), cy + 6 * sz * math.sin(ang))
-                pts = [(cx, cy), (cx + 4 * sz * math.cos(ang - .5), cy + 3 * sz * math.sin(ang - .5)), tip,
-                       (cx + 4 * sz * math.cos(ang + .5), cy + 3 * sz * math.sin(ang + .5))]
+            for k in range(6):
+                ang = 2 * math.pi * k / 6 + .15 * math.sin(tc)
+                tip = (cx + 7 * math.cos(ang), cy + 7 * math.sin(ang))
+                pts = [(cx, cy), (cx + 3 * math.cos(ang - .55), cy + 3 * math.sin(ang - .55)), tip,
+                       (cx + 3 * math.cos(ang + .55), cy + 3 * math.sin(ang + .55))]
                 m = poly_mask(pts)
                 ys, xs = np.nonzero(m)
-                img[ys, xs] = shade(.95 - .6 * np.hypot(xs - cx, ys - cy) / (9 * sz), LOTUS, ys, xs, .7)
+                img[ys, xs] = shade(.95 - .6 * np.hypot(xs - cx, ys - cy) / 7, LOTUS, ys, xs, .6)
                 fm |= m
             img[dilate(fm) & ~fm] = OUTLINE
-            for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
-                img[int(cy) + dy, int(cx) + dx] = C["fee761"]
+            img[int(cy), int(cx)] = C["fee761"]
 
-        if d.season in ("autumn", "spring"):
-            for x0, y0, rad, ph, dirn, kind in self.drift:
+        if d.season == "autumn":                                  # a few fallen leaves, turning slowly
+            for x0, y0, rad, ph, dirn, kind in self.leaves:
                 ang = ph + dirn * tc
-                p = np.array([x0 + rad * math.cos(ang), y0 + rad * .6 * math.sin(ang)])
-                if d.season == "autumn":
-                    u = np.array([math.cos(ang), math.sin(ang)])
-                    m = poly_mask([p + u * 9, p + u * 3 + perp(u) * 4.5, p - u * 6, p - u * 1 - perp(u) * 4.5])
-                    img[m] = R("be4a2f", "f77622", "feae34", "733e39")[kind]
-                    img[dilate(m) & ~m] = OUTLINE
-                    line(img, p - u * 6, p - u * 10, C["733e39"])
-                    line(img, p - u * 5, p + u * 7, C["3e2731"] if kind == 3 else C["733e39"])
-                else:
-                    x, y = int(p[0]), int(p[1])
-                    for dx, dy in ((0, 0), (1, 0), (0, 1)):
-                        if 0 <= x + dx < CW and 0 <= y + dy < CH:
-                            img[y + dy, x + dx] = C["f6757a"] if (dx + dy + kind) % 2 else C["ffffff"]
+                p = np.array([x0 + rad * math.cos(ang), y0 + rad * math.sin(ang)])
+                u = np.array([math.cos(ang * .5 + ph), math.sin(ang * .5 + ph)])
+                pts = [p + u * 7] + [p + u * 7 * math.cos(t) + perp(u) * 3.4 * math.sin(t) for t in np.linspace(.3, 2.8, 6)] \
+                      + [p - u * 7] + [p + u * 7 * math.cos(t) - perp(u) * 3.4 * math.sin(t) for t in np.linspace(2.8, .3, 6)]
+                m = poly_mask(pts)
+                ys, xs = np.nonzero(m)
+                ramp = [R("733e39", "be4a2f"), R("733e39", "c28569"), R("3e2731", "733e39")][kind]
+                img[ys, xs] = shade(.6 - .3 * ((xs - p[0]) * u[0] + (ys - p[1]) * u[1]) / 7, ramp, ys, xs, .8)
+                img[dilate(m) & ~m] = OUTLINE
+                line(img, p - u * 6, p + u * 6, C["3e2731"])
+                line(img, p - u * 7, p - u * 10, C["3e2731"])
+
+        if d.season == "spring":
+            for x0, y0, rad, ph, dirn, kind in self.leaves * 2:
+                ang = ph + kind + dirn * tc
+                x, y = int(x0 + rad * 3 * math.cos(ang)), int(y0 + rad * 2 * math.sin(ang))
+                img[y, x] = C["f6757a"]
+                img[y, x + 1] = C["e8b796"]
 
         if d.season == "winter":
             for x0, y0, ph in self.flakes:
                 y = (y0 + CH * f / F) % (CH + 6) - 3
                 xi, yi = int(x0 + 4 * math.sin(tc * 2 + ph)) % CW, int(y)
                 if 0 <= yi < CH:
-                    img[yi, xi] = C["ffffff"]
-                    if yi + 1 < CH and int(ph * 10) % 3 == 0:
-                        img[yi + 1, xi] = C["c0cbdc"]
+                    img[yi, xi] = C["c0cbdc"]
 
-        if d.season == "summer":
-            p = np.array([CW / 2 + 190 * math.sin(tc * 2 + .6), 46 + 22 * math.sin(tc * 3)])
-            v = unit(np.array([380 * math.cos(tc * 2 + .6), 66 * math.cos(tc * 3)]))
+        if d.season == "summer":                                  # a dragonfly skimming the water
+            p = np.array([CX + 150 * math.sin(tc * 2 + .6), CY - 92 + 14 * math.sin(tc * 3)])
+            v = unit(np.array([300 * math.cos(tc * 2 + .6), 42 * math.cos(tc * 3)]))
             for k in range(7):
                 q = p - v * k
-                img[int(q[1]), int(q[0]) % CW] = C["0099db"] if k else C["124e89"]
+                img[int(q[1]), int(q[0])] = C["0099db"] if k else C["124e89"]
             up = f % 2 == 0
             for side in (-1, 1):
                 for off in (1.5, 3.5):
                     base = p - v * off
-                    line(img, base, base + perp(v) * side * 6 + v * (1.5 if up else -1.5), C["c0cbdc"])
+                    line(img, base, base + perp(v) * side * 6 + v * (1.5 if up else -1.5), C["8b9bb4"])
 
         if d.event == "hook":
-            hx = self.hook[0] + 3 * math.sin(tc)
-            hy = self.hook[1] + 4 * math.sin(tc * 2)
-            line(img, (self.hook[0], 12), (hx, hy), C["8b9bb4"])
+            hx = self.hook[0] + 2 * math.sin(tc)
+            hy = self.hook[1] + 2 * math.sin(tc * 2)
+            m = np.zeros((CH, CW), bool)
             for dx, dy, c in ((-1, -1, "e43b44"), (0, -1, "e43b44"), (1, -1, "e43b44"),
-                              (-1, 0, "ffffff"), (0, 0, "ffffff"), (1, 0, "ffffff")):
-                img[12 + dy, int(self.hook[0]) + dx] = C[c]
-            for dx, dy in ((0, 1), (0, 2), (0, 3), (1, 4), (2, 4), (3, 3), (3, 2)):
-                img[int(hy) + dy, int(hx) + dx] = C["c0cbdc"]
-            for dx, dy in ((1, 3), (2, 3), (2, 5), (1, 5)):
-                img[int(hy) + dy, int(hx) + dx] = C["f6757a"]
+                              (-1, 0, "c0cbdc"), (0, 0, "c0cbdc"), (1, 0, "c0cbdc"), (0, -2, "e43b44")):
+                img[int(hy) + dy, int(hx) + dx] = C[c]
+                m[int(hy) + dy, int(hx) + dx] = True
+            img[dilate(m) & ~m] = OUTLINE
+            line(img, (hx, hy - 3), (hx + 60, hy - 120), C["5a6988"])     # the line, leaving the frame
+
+        img[self.rim >= 0] = self.rim[self.rim >= 0]
 
     def sky(self, img, f):
         """Above the water: the heron's shadow sweeping across."""
@@ -640,7 +698,7 @@ class Pond:
         c = heron_at(f)
         if c is None:
             return
-        w = 100 - 22 * (1 + math.sin(f * .45))         # wingtips beat in and out
+        w = 100 - 22 * (1 + math.sin(f * .45))
         shape = [(80, 0), (63, -3), (57, -6), (49, -4), (32, -4), (16, -8),
                  (6, -w * .45), (-4, -w), (-16, -w * .95), (-26, -w * .55), (-30, -8),
                  (-46, -5), (-60, -2), (-90, -1), (-90, 2), (-60, 2), (-46, 5),
@@ -691,13 +749,13 @@ def draw_fry(img, fr, f):
         root = p - d * 10 + n * wag * 1.5
         ys, xs, u, sv = tube([p + d * 3, p - d * 4, root], lambda u: 3.3 - 2.0 * u)
         L = .45 + .55 * np.sqrt(np.clip(1 - sv * sv, 0, 1)) - .2 * sv
-        col = shade(L, R("5a6988", "8b9bb4", "c0cbdc", "ffffff"), ys, xs)
+        col = shade(L, R("3a4466", "5a6988", "8b9bb4", "c0cbdc"), ys, xs)
         tail = [root - d * 4 + n * (3.5 + wag), root - d * 4 - n * (3.5 - wag)]
         paint.append((ys, xs, col, p + d * 2 + n * 1.4, tail, root))
         fmask[ys, xs] = True
     for ys, xs, col, eye, tail, root in paint:
         for tp in tail:
-            line(img, root, tp, C["8b9bb4"], tm)
+            line(img, root, tp, C["5a6988"], tm)
     allm = fmask | tm
     img[dilate(allm) & ~allm] = OUTLINE
     for ys, xs, col, eye, tail, root in paint:
@@ -771,7 +829,6 @@ def build(day, out=OUT):
                     line(img, m + dv * r0, m + dv * r1, C["ffffff"] if a % 90 == 0 else C["fee761"])
         pond.surface(img, f, rec)
         pond.sky(img, f)
-        text(img, label, 8, CH - 14, C["5a6988"], 2)
         im = Image.fromarray(np.where(img < 0, 255, img).astype(np.uint8), "P")
         im.putpalette(pal)
         frames.append(im)
