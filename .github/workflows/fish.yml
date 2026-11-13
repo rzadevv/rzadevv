@@ -1,5 +1,6 @@
-# Redraws fish/fish.gif every day, like the koi: a new colour morph and stripe
-# pattern each day, and one fry in the school per push you made yesterday.
+# Redraws fish/fish.gif every day: your contribution streak sets the fish's life
+# stage (it becomes a dragon at 30 days), yesterday's contributions set its mood,
+# and the pond follows the season. Some days bring a golden fish, a heron or a hook.
 name: Fish
 
 on:
@@ -31,7 +32,7 @@ jobs:
         run: python fish/fish.py
       - name: Commit if it changed
         run: |
-          git add fish/fish.gif
+          git add fish/
           if git diff --cached --quiet; then exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
