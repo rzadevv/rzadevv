@@ -1,0 +1,36 @@
+# Redraws jungle/jungle.svg every day: the lion tries again, the monkey mocks it,
+# and yesterday's pushes become bananas under the tree.
+name: Jungle
+
+on:
+  schedule:
+    - cron: "35 0 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/jungle.yml, jungle/scene.py]
+
+permissions:
+  contents: write
+
+concurrency: jungle
+
+jobs:
+  draw:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Draw today's episode
+        env:
+          GH_USER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 jungle/scene.py
+      - name: Commit if it changed
+        run: |
+          git add jungle/jungle.svg jungle/state.json
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --quiet -m "jungle: the lion tries again"
+          git pull --rebase --quiet
+          git push --quiet
