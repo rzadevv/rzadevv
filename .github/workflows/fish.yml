@@ -30,9 +30,17 @@ jobs:
           GH_USER: ${{ github.repository_owner }}
           GH_TOKEN: ${{ github.token }}
         run: python fish/fish.py
-      - name: Commit if it changed
+      - name: Publish under a new name so image caches fetch it
         run: |
-          git add fish/
+          name="fish/fish-$(date -u +%Y%m%d%H%M).gif"
+          git rm -q --ignore-unmatch fish/fish-*.gif
+          mv fish/fish.gif "$name"
+          git rm -q --cached --ignore-unmatch fish/fish.gif
+          sed -i -E 's#src="fish/fish[^"]*\.gif"#src="'"$name"'"#' README.md
+          grep -q "$name" README.md
+      - name: Commit
+        run: |
+          git add -A fish README.md
           if git diff --cached --quiet; then exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
