@@ -13,6 +13,11 @@ school of fry and strikes. It is redrawn every day from your activity:
 * the pond follows the season: autumn leaves, winter ice and snow, spring
   petals, summer lotus and a dragonfly.
 * rare days: a golden fish, a heron's shadow passing over, or a fishing hook.
+* variety: one of five routes (mirrored), eight colour morphs, four patterns
+  (tiger, patches, spots, bands), its own fin and whisker length; some days a
+  beetle lands on the water and gets gulped, or the fish slaps its tail.
+* every loop: a straggler fry is chased and hides under a lily pad, and the
+  school scatters when the fish dashes through.
 
     python3 fish/fish.py                      # fetch activity, draw fish/fish.gif
     STREAK=31 CONTRIB=8 DATE=2026-07-02 EVENT=heron python3 fish/fish.py
@@ -37,7 +42,7 @@ STATE = HERE / "state.json"
 
 CW, CH = 800, 288
 F = 160
-FRAME_MS = 70
+FRAME_MS = 60
 SUB = 4
 CX, CY = 400, 144
 PA, PB = CW / 2 - 4, CH / 2 - 4        # edge of the water (rounded rectangle), used for winter frost
@@ -72,6 +77,29 @@ MORPHS = {
                  line=R("0099db", "2ce8f5", "ffffff"),
                  tip=R("feae34", "fee761", "ffffff")),
 }
+MORPHS.update({
+    "kohaku": dict(base=R("8b9bb4", "c0cbdc", "ffffff", "ffffff"),
+                   stripe=R("a22633", "e43b44", "f77622"),
+                   crown=R("a22633", "e43b44", "f6757a"),
+                   line=R("124e89", "0099db", "2ce8f5", "ffffff"),
+                   tip=R("e43b44", "f6757a", "ffffff")),
+    "azure": dict(base=R("124e89", "0099db", "2ce8f5", "ffffff"),
+                  stripe=R("181425", "262b44", "124e89"),
+                  crown=R("feae34", "fee761", "ffffff"),
+                  line=R("fee761", "ffffff", "fee761", "ffffff"),
+                  tip=R("2ce8f5", "ffffff", "ffffff")),
+    "ember": dict(base=R("3e2731", "a22633", "e43b44", "f77622"),
+                  stripe=R("181425", "262b44", "3e2731"),
+                  crown=R("feae34", "fee761", "ffffff"),
+                  line=R("f77622", "feae34", "fee761", "ffffff"),
+                  tip=R("e43b44", "f77622", "feae34")),
+    "sakura": dict(base=R("c28569", "e8b796", "ffffff", "ffffff"),
+                   stripe=R("68386c", "b55088", "f6757a"),
+                   crown=R("b55088", "f6757a", "ffffff"),
+                   line=R("b55088", "f6757a", "ffffff", "ffffff"),
+                   tip=R("f6757a", "e8b796", "ffffff")),
+})
+PATTERNS = ["tiger", "patches", "spots", "bands"]
 GOLDEN = dict(base=R("733e39", "be4a2f", "feae34", "fee761", "ffffff"),
               stripe=R("be4a2f", "f77622", "feae34"),
               crown=R("a22633", "e43b44", "f6757a"),
@@ -167,16 +195,33 @@ class Chase:
     """
 
     def __init__(self, dash):
-        T, _, _, _ = _path(dash)
-        k = 240
-        t_br, t_tr = T[2 * k] % F, T[3 * k] % F
+        T, _, _, strikes = _path(dash)
+        k, m = 240, len(WAYPOINTS)
+
+        def gap(t):                                    # frames to the nearest strike
+            return min((min(abs(t - u) % F, F - abs(t - u) % F) for u in strikes), default=F)
+
+        best = None
+        for c in range(m):                             # chase round the corner furthest from the strikes
+            if not is_corner(WAYPOINTS[c]):
+                continue
+            t_c = T[c * k]
+            t_n = T[((c + 1) % m) * k] + (F if c + 1 == m else 0)
+            window = [t_c - 14 + i for i in range(0, int(t_n - t_c) + 40, 4)]
+            score = min(gap(t) for t in window)
+            if best is None or score > best[0]:
+                best = (score, t_c, t_n)
+        if best is None:
+            best = (0, T[0], T[k])
+        _, t_br, t_tr = best
         self.notice = int(round(t_br - 14))
-        self.hide = int(round((t_br + t_tr) / 2 + 3))
+        self.hide = int(round(t_br + (t_tr - t_br) * .45 + 3))
         self.snap = self.hide + 3
         self.out = self.hide + 30
         self.home = self.out + 46
         hp = head_at(self.snap + 3, dash)
         self.pad = hp + unit(np.array([CX, CY]) - hp) * 14         # right in its path
+        self.pad = np.clip(self.pad, (24, 24), (CW - 24, CH - 24))
 
         def route(t):
             return head_at(t, dash)
@@ -191,7 +236,7 @@ class Chase:
             return .5 - .5 * math.cos(math.pi * min(max(q, 0.0), 1.0))
 
         start, dive_from = chase_pos(self.notice), chase_pos(self.hide)
-        school = np.array([CX, CY]) + unit(self.pad - (CX, CY)) * 55
+        school = SCHOOL + unit(self.pad - SCHOOL) * 55
         peek = self.pad + unit(school - self.pad) * 15
         pos, hidden, alert = np.zeros((F, 2)), np.zeros(F, bool), np.zeros(F, bool)
         for f in range(self.notice, self.notice + F):
@@ -216,6 +261,7 @@ class Chase:
             hidden[g] = self.hide + 3 <= f <= self.out
             alert[g] = self.notice <= f <= self.notice + 10
         self.pos, self.hidden, self.alert = pos, hidden, alert
+        self.notice, self.hide, self.snap, self.out = (self.notice % F, self.hide % F, self.snap % F, self.out % F)
         self.vel = (np.roll(pos, -1, 0) - np.roll(pos, 1, 0)) / 2
 
 
@@ -232,17 +278,50 @@ class Day:
         self.mood = "resting" if contrib == 0 else "hunting" if contrib <= 5 else "feasting"
         self.width = {"resting": 1.0, "hunting": 1.0, "feasting": 1.06}[self.mood]
         self.dash = .1 if self.mood == "resting" else .32
-        centres = tuple(_path(self.dash)[3])
-        self.eats = () if self.mood == "resting" else centres
-        self.catches = {"resting": set(), "hunting": {centres[0]}, "feasting": set(centres)}[self.mood]
+        rng = np.random.default_rng(self.seed)
+        # today's route, mirrored at random
+        self.route = list(ROUTES)[int(rng.integers(len(ROUTES)))]
+        way, school = ROUTES[self.route]
+        flip = np.array([rng.choice([-1, 1]) * RX, rng.choice([-1, 1]) * RY])
+        configure(np.array(way) * flip + (CX, CY), np.array(school) * flip + (CX, CY))
+        strikes = tuple(_path(self.dash)[3])
+        self.eats = () if self.mood == "resting" else strikes
+        self.catches = {"resting": set(), "hunting": set(strikes[:1]), "feasting": set(strikes)}[self.mood]
         self.chase = Chase(self.dash)
         self.snaps = list(self.eats) + [self.chase.snap]
+        # this fish's own build
+        self.fin_mul = rng.uniform(.88, 1.18)
+        self.whisk_mul = rng.uniform(.8, 1.3)
+        self.width *= rng.uniform(.94, 1.06)
+        self.tail_spread = rng.uniform(.75, 1.25)
+        self.pattern = PATTERNS[int(rng.integers(len(PATTERNS)))]
+
+        # extra moments, on some days: an insect on the surface, a tail slap in a turn
+        def free(t, pad):
+            busy = list(strikes) + [self.chase.notice + i for i in range(0, (self.chase.out - self.chase.notice) % F, 3)]
+            return all(min(abs(t - u) % F, F - abs(t - u) % F) > pad for u in busy)
+
+        self.bug = None
+        if rng.random() < .65:
+            options = [t for t in range(F) if free(t, 26)]
+            if options:
+                self.bug = int(options[int(rng.integers(len(options)))])
+                self.snaps.append(self.bug)
+        self.slap = None
+        if rng.random() < .5:
+            T = _path(self.dash)[0]
+            corners = [int(round(T[i * 240])) % F for i, c in enumerate(WAYPOINTS) if is_corner(c)]
+            corners = [t for t in corners if free(t, 12) and (self.bug is None or abs(t - self.bug) > 12)]
+            if corners:
+                self.slap = corners[int(rng.integers(len(corners)))]
         if event is None:
             h = self.seed % 100
             event = "golden" if h < 6 else "heron" if h < 12 else "hook" if h < 18 else ""
         self.event = event
         names = list(MORPHS)
-        self.morph_name = "golden" if event == "golden" else names[self.seed % len(names)]
+        self.morph_name = "golden" if event == "golden" else names[int(rng.integers(len(names)))]
+        if self.morph_name == "kohaku":
+            self.pattern = "patches"
         self.morph = GOLDEN if event == "golden" else MORPHS[self.morph_name]
         m = date.month
         self.season = ("winter" if m in (12, 1, 2) else "spring" if m in (3, 4, 5)
@@ -257,13 +336,35 @@ class Day:
 
 # ------------------------------------------------------------------ motion --
 
-WAYPOINTS = np.array([(-318, -92), (0, 0), (318, 92), (318, -92), (0, 0), (-318, 92)], float) + (CX, CY)
+RX, RY = 318, 90
+# each route: waypoints and where the school gathers, in units of (RX, RY) around the centre
+ROUTES = {
+    "bow-tie": ([(-1, -1), (0, 0), (1, 1), (1, -1), (0, 0), (-1, 1)], (0, 0)),
+    "grand tour": ([(-1, -1), (0, -1.02), (1, -1), (1, 0), (1, 1), (0, .05), (-1, 1), (-1, 0)], (0, .05)),
+    "double eight": ([(-1, -.2), (-.6, -1), (0, 0), (.6, 1), (1, .2), (.6, -1), (0, 0), (-.6, 1)], (0, 0)),
+    "zigzag": ([(-1, -1), (-.4, 1), (.2, -1), (1, 1), (1, -1), (.1, .1), (-1, 1)], (.1, .1)),
+    "racetrack": ([(-1, -1), (0, -1.02), (1, -1), (1, 1), (.3, .25), (-.3, -.25), (-1, 1)], (0, 0)),
+}
+FRAMES_PER_LEG = 30
+WAYPOINTS = SCHOOL = None
 _PATHS = {}
+
+
+def configure(waypoints, school):
+    """Set today's route. The loop length follows the number of legs."""
+    global WAYPOINTS, SCHOOL, F
+    WAYPOINTS, SCHOOL = np.asarray(waypoints, float), np.asarray(school, float)
+    F = FRAMES_PER_LEG * len(WAYPOINTS)
+    _PATHS.clear()
+
+
+def is_corner(p):
+    return abs(p[0] - CX) > .9 * RX and abs(p[1] - CY) > .85 * RY
 
 
 def _path(dash):
     """Closed Catmull-Rom loop through the waypoints, timed so the fish slows into
-    the corners and dashes through the middle. Returns (times, xs, ys, centre times)."""
+    the corners and dashes past the school. Returns (times, xs, ys, strike times)."""
     if dash in _PATHS:
         return _PATHS[dash]
     P, m, k = WAYPOINTS, len(WAYPOINTS), 240
@@ -277,13 +378,24 @@ def _path(dash):
     pts = np.array(pts + [pts[0]])
     ds = np.linalg.norm(np.diff(pts, axis=0), axis=1)
     mid = (pts[:-1] + pts[1:]) / 2
-    dc = np.linalg.norm(mid - (CX, CY), axis=1)
-    dk = np.min([np.linalg.norm(mid - c, axis=1) for c in WAYPOINTS[[0, 2, 3, 5]]], axis=0)
-    v = 1 + 2.2 * dash * np.exp(-(dc / 80) ** 2) - .3 * np.exp(-(dk / 70) ** 2)
+    dsch = np.linalg.norm(mid - SCHOOL, axis=1)
+    corners = [c for c in P if is_corner(c)] or [P[0]]
+    dk = np.min([np.linalg.norm(mid - c, axis=1) for c in corners], axis=0)
+    v = 1 + 2.2 * dash * np.exp(-(dsch / 80) ** 2) - .3 * np.exp(-(dk / 70) ** 2)
     T = np.concatenate([[0], np.cumsum(ds / v)])
     T *= F / T[-1]
-    centres = sorted(int(round(T[i * k])) % F for i in (1, 4))
-    _PATHS[dash] = (T, pts[:, 0], pts[:, 1], centres)
+    # strikes: every pass close by the school
+    d = np.linalg.norm(pts[:-1] - SCHOOL, axis=1)
+    n = len(d)
+    mins = [i for i in range(n) if d[i] < 45 and d[i] <= d[i - 1] and d[i] <= d[(i + 1) % n]]
+    if not mins:
+        mins = [int(d.argmin())]
+    strikes = []
+    for i in sorted(mins, key=lambda i: d[i]):
+        t = int(round(T[i])) % F
+        if all(min(abs(t - u), F - abs(t - u)) > 20 for u in strikes):
+            strikes.append(t)
+    _PATHS[dash] = (T, pts[:, 0], pts[:, 1], sorted(strikes))
     return _PATHS[dash]
 
 
@@ -316,9 +428,10 @@ def follow_biased(pts, base, seg, bias, k):
 
 def heron_at(f):
     """Centre of the heron's shadow, frames 34-86, else None."""
-    if not 45 <= f <= 115:
+    a, b = int(.28 * F), int(.72 * F)
+    if not a <= f <= b:
         return None
-    q = (f - 45) / 70
+    q = (f - a) / (b - a)
     return np.array([-110 + q * (CW + 220), 70 + q * 110])
 
 
@@ -335,14 +448,14 @@ def simulate(day):
     whisk = [np.repeat(body[:1], n, 0).astype(float) for n in (wl, wl, 7, 7)]
     slots = [(rng.uniform(10, 44), rng.uniform(0, math.tau), int(rng.choice([-2, -1, 1, 2])),
               rng.uniform(.5, .8)) for _ in range(N_FRY)]
-    fry = np.array([[CX, CY]] * N_FRY, float) + rng.normal(0, 10, (N_FRY, 2))
+    fry = np.array([SCHOOL] * N_FRY, float) + rng.normal(0, 10, (N_FRY, 2))
     vel = np.zeros_like(fry)
     victims, hidden, rec = {}, np.zeros(N_FRY, bool), []
 
     def target(k, t):
         r, ph, m, sq = slots[k]
         a = ph + 2 * math.pi * m * t / F
-        c = np.array([CX + 20 * math.sin(2 * math.pi * t / F), CY + 12 * math.sin(4 * math.pi * t / F + 1)])
+        c = SCHOOL + np.array([20 * math.sin(2 * math.pi * t / F), 12 * math.sin(4 * math.pi * t / F + 1)])
         return c + r * np.array([math.cos(a), math.sin(a) * sq])
 
     loops = 4
@@ -353,12 +466,13 @@ def simulate(day):
             follow(body, head_pos(t, day), seg)
             axis = unit(body[-1] - body[-2])
             for side, tl in zip((-1, 1), tails):
-                follow_biased(tl, body[-2] * .3 + body[-1] * .7, 4.1 * S * day.fins, unit(axis + side * perp(axis)), .2)
+                follow_biased(tl, body[-2] * .3 + body[-1] * .7, 4.1 * S * day.fins * day.fin_mul,
+                              unit(axis + side * day.tail_spread * perp(axis)), .2)
             fwd = unit(body[0] - body[1])
             for i, w in enumerate(whisk):
                 side = -1 if i % 2 == 0 else 1
                 base = body[0] + fwd * (8 if i < 2 else 5) * S + perp(fwd) * side * (5 if i < 2 else 8) * S
-                follow_biased(w, base, 3.4 * S, unit(-.45 * fwd + side * perp(fwd)), .2)
+                follow_biased(w, base, 3.4 * S * day.whisk_mul, unit(-.45 * fwd + side * perp(fwd)), .2)
             mouth = body[0] + fwd * 7 * S
             heron = heron_at(f) if day.event == "heron" else None
             for k in range(N_FRY):
@@ -405,7 +519,7 @@ def simulate(day):
                 if f == (te + 16) % F:
                     hidden[k] = False
                     fry[k] = np.array([CX + 380 * (1 if mouth[0] < CX else -1), CY + rng.uniform(-40, 40)])
-                    vel[k] = unit(np.array([CX, CY]) - fry[k]) * 3.5
+                    vel[k] = unit(SCHOOL - fry[k]) * 3.5
             else:
                 if te - 6 <= f < te - 2:                        # nearly...
                     fry[k] += (mouth - fry[k]) * .25
@@ -493,7 +607,7 @@ def draw_fish(fr, f, day, glints):
             ang = side * (.95 + .35 * math.sin(tc * 7 + beat + (side > 0) * .9)) * spread
             dirv = rot(ax, ang)
             root = body[idx] + n * side * body_radius(np.array([idx / (N - 1)]))[0] * .7
-            L = length * S * day.fins
+            L = length * S * day.fins * day.fin_mul
             pts = [root + dirv * L * i / 6 + n * side * math.sin(i * .5) * 1.5 * S for i in range(7)]
             fin(pts, lambda u, rm=rmax * S: rm * np.sin(np.clip(u, .08, 1) * math.pi) ** .7 + .6)
 
@@ -515,8 +629,18 @@ def draw_fish(fr, f, day, glints):
     L = .3 + .62 * np.sqrt(np.clip(1 - s * s, 0, 1)) - .2 * s - .12 * np.clip((u - .8) * 5, 0, 1)
     col = shade(L, morph["base"], ys, xs)
     n1 = vnoise(day.seed, u * 30, s * 3 + 7)
-    sv = (u * 10.5 + .55 * np.abs(s) ** 1.3 + .45 * n1) % 1
-    stripe = (sv < .34) & (u > .17) & (u < .93) & (np.abs(s) > .12 + .35 * n1)
+    inb = (u > .14) & (u < .93)
+    if day.pattern == "tiger":                                   # chevron stripes from the flanks
+        sv = (u * 10.5 + .55 * np.abs(s) ** 1.3 + .45 * n1) % 1
+        stripe = (sv < .34) & inb & (np.abs(s) > .12 + .35 * n1)
+    elif day.pattern == "patches":                               # big koi patches
+        stripe = (vnoise(day.seed + 3, u * 7, s * 1.6 + 3) > .52) & inb
+    elif day.pattern == "spots":                                 # leopard spots
+        sp = vnoise(day.seed + 4, u * 26, s * 4.5 + 9)
+        stripe = (sp > .66) & inb & (np.abs(s) > .15)
+    else:                                                        # three broad saddles
+        sv = (u * 3.4 + .25 * n1) % 1
+        stripe = (sv < .3) & inb & (u > .22)
     col = np.where(stripe, shade(L - .1, morph["stripe"], ys, xs), col)
     crown = (((u - .1) / .055) ** 2 + (s / (.34 - 1.6 * np.clip(.1 - u, -.1, .1))) ** 2
              < 1 + .5 * (vnoise(day.seed + 1, u * 40, s * 4) - .5))
@@ -615,10 +739,20 @@ class Pond:
         self.under = np.full((CH, CW), -1, int)
         self._submerged(CX - 170, CY + 96)
         hp = day.chase.pad
-        self.pads = [(hp[0], hp[1], 18, rng.uniform(0, 6)), (CX + 98, CY - 112, 8, rng.uniform(0, 6)),
-                     (CX - 96, CY + 102, 13, rng.uniform(0, 6))]
+        self.pads = [(hp[0], hp[1], 18, rng.uniform(0, 6))]
+        for _ in range(int(rng.integers(1, 5))):                 # a few more, somewhere near the banks
+            for _try in range(20):
+                x = CX + rng.uniform(-.92, .92) * (CW / 2)
+                y = rng.choice([rng.uniform(16, 40), rng.uniform(CH - 40, CH - 16)])
+                if all(math.hypot(x - px, y - py) > 40 for px, py, _, _ in self.pads):
+                    self.pads.append((x, y, rng.uniform(7, 15), rng.uniform(0, 6)))
+                    if rng.random() < .4:                        # a baby pad alongside
+                        self.pads.append((x + rng.uniform(-22, 22), y + rng.uniform(-8, 8), rng.uniform(5, 7),
+                                          rng.uniform(0, 6)))
+                    break
         self.leaves = [(CX + rng.uniform(-330, 330), CY + rng.uniform(-90, 90), rng.uniform(3, 6),
-                        rng.uniform(0, 6), int(rng.choice([-1, 1])), int(rng.integers(0, 3))) for _ in range(4)]
+                        rng.uniform(0, 6), int(rng.choice([-1, 1])), int(rng.integers(0, 3)))
+                       for _ in range(int(rng.integers(2, 7)))]
         self.flakes = [(rng.uniform(0, CW), rng.uniform(0, CH), rng.uniform(0, 6)) for _ in range(20)]
         self.drips = [(int(rng.uniform(0, F)), self.inside(rng)) for _ in range(3)]
         self.hook = np.array([CX + rng.uniform(-260, 260), CY + rng.uniform(-60, 60)])
@@ -627,7 +761,7 @@ class Pond:
             yy, xx = np.mgrid[0:CH, 0:CW]
             rn = self.rnorm(xx, yy)
             n = vnoise(day.seed + 5, xx / 8.0, yy / 8.0)
-            self.ice = (rn < 1.0) & (rn > .94 - .06 * n)
+            self.ice = (rn < 1.0) & (rn > .975 - .05 * n) & (vnoise(day.seed + 6, xx / 30.0, yy / 30.0) > .35)
 
     def inside(self, rng):
         return np.array([CX + rng.uniform(-.75, .75) * PA, CY + rng.uniform(-.65, .65) * PB])
@@ -700,6 +834,11 @@ class Pond:
         tc = 2 * math.pi * f / F
         events = [(te, rec[te]["mouth"]) for te in d.eats] + self.drips
         events += [(d.chase.hide + 3, d.chase.pad), (d.chase.snap, rec[d.chase.snap]["mouth"])]
+        if d.bug is not None:
+            bp = rec[d.bug]["mouth"]
+            events += [(t0 % F, bp) for t0 in range(d.bug - 60, d.bug, 15)] + [(d.bug, bp)]
+        if d.slap is not None:
+            events.append((d.slap, (rec[d.slap]["tails"][0][-1] + rec[d.slap]["tails"][1][-1]) / 2))
         if d.event == "hook":
             events += [(t0, self.hook.copy()) for t0 in (0, 80)]
         for t0, p in events:
@@ -792,6 +931,40 @@ class Pond:
                     base = p - v * off
                     line(img, base, base + perp(v) * side * 6 + v * (1.5 if up else -1.5), C["8b9bb4"])
 
+        if d.bug is not None:                                    # a beetle struggling on the surface
+            age = (d.bug - f) % F
+            bp = rec[d.bug]["mouth"]
+            if 0 < age <= 60:
+                jx, jy = int(bp[0]) + (f % 3 == 0), int(bp[1]) + (f % 4 == 1)
+                m = np.zeros((CH, CW), bool)
+                body = [(dx, dy) for dx in range(-1, 2) for dy in range(0, 4)] + [(0, -1)]
+                for dx, dy in body:
+                    m[jy + dy, jx + dx] = True
+                flap = 2 if f % 2 else -2
+                wings = [((jx - 1, jy + 1), (jx - 6, jy + 1 + flap)), ((jx + 1, jy + 1), (jx + 6, jy + 1 - flap)),
+                         ((jx - 1, jy + 3), (jx - 5, jy + 5 - flap)), ((jx + 1, jy + 3), (jx + 5, jy + 5 + flap))]
+                for a, b in wings:
+                    line(img, a, b, C["c0cbdc"], m)
+                img[dilate(m) & ~m] = OUTLINE
+                for a, b in wings:
+                    line(img, a, b, C["c0cbdc"])
+                for dx, dy in body:
+                    img[jy + dy, jx + dx] = C["3e2731"] if dy < 0 else (C["c28569"] if dx == -1 and dy == 1 else C["733e39"])
+        for t0, p in ((d.bug, rec[d.bug]["mouth"]) if d.bug is not None else (None, None),
+                      (d.slap, (rec[d.slap]["tails"][0][-1] + rec[d.slap]["tails"][1][-1]) / 2) if d.slap is not None else (None, None)):
+            if t0 is None:
+                continue
+            age = (f - t0) % F
+            if age < 6:                                          # splash droplets
+                for a in range(0, 360, 30):
+                    r = 9 + age * 4
+                    x = int(p[0] + r * math.cos(math.radians(a + t0 * 7)))
+                    y = int(p[1] + r * .7 * math.sin(math.radians(a + t0 * 7)))
+                    col = C["ffffff"] if age < 3 else C["8b9bb4"]
+                    for dx, dy in ((0, 0), (1, 0), (0, 1)) if age < 3 else ((0, 0),):
+                        if 0 <= x + dx < CW and 0 <= y + dy < CH:
+                            img[y + dy, x + dx] = col
+
         if d.event == "hook":
             hx = self.hook[0] + 2 * math.sin(tc)
             hy = self.hook[1] + 2 * math.sin(tc * 2)
@@ -863,7 +1036,8 @@ def draw_fry(img, fr, f, ramp=None):
         root = p - d * 10 + n * wag * 1.5
         ys, xs, u, sv = tube([p + d * 3, p - d * 4, root], lambda u: 3.3 - 2.0 * u)
         L = .45 + .55 * np.sqrt(np.clip(1 - sv * sv, 0, 1)) - .2 * sv
-        r = ramp or (R("5a6988", "8b9bb4", "c0cbdc", "ffffff") if np.linalg.norm(v) > 3.4   # panic flash
+        near = np.linalg.norm(p - fr["mouth"]) < 120
+        r = ramp or (R("5a6988", "8b9bb4", "c0cbdc", "ffffff") if np.linalg.norm(v) > 3.4 and near   # panic flash
                      else R("3a4466", "5a6988", "8b9bb4", "c0cbdc"))
         col = shade(L, r, ys, xs)
         tail = [root - d * 4 + n * (3.5 + wag), root - d * 4 - n * (3.5 - wag)]
@@ -923,6 +1097,12 @@ def build(day, out=OUT):
         bubbles.append(dict(t=ch.snap + i % 2, p=rec[ch.snap]["mouth"] + rng.normal(0, 2, 2),
                             v=rot(fwd, rng.uniform(-1.2, 1.2)) * rng.uniform(.4, .9),
                             r=1, life=int(rng.integers(10, 16)), ph=rng.uniform(0, 6)))
+    if day.bug is not None:
+        fwd = unit(rec[day.bug]["body"][0] - rec[day.bug]["body"][1])
+        for i in range(4):
+            bubbles.append(dict(t=day.bug + i % 2, p=rec[day.bug]["mouth"] + rng.normal(0, 2, 2),
+                                v=rot(fwd, rng.uniform(-1.3, 1.3)) * rng.uniform(.4, .9),
+                                r=1, life=int(rng.integers(10, 16)), ph=rng.uniform(0, 6)))
     speeds = [np.linalg.norm(rec[(f + 1) % F]["body"][0] - rec[f - 1]["body"][0]) / 2 for f in range(F)]
     wake_from = float(np.percentile(speeds, 62))
     glints = [(rng.uniform(.2, .85), rng.uniform(-.8, .8), rng.uniform(0, 6))
@@ -955,7 +1135,8 @@ def build(day, out=OUT):
                             img[y, x] = C["3a4466"] if k < 14 else C["262b44"]
         draw_fry(img, fr, f)
         ch = day.chase
-        draw_fry(img, dict(fry=ch.pos[f:f + 1], fvel=ch.vel[f:f + 1], hidden=ch.hidden[f:f + 1]), f,
+        draw_fry(img, dict(fry=ch.pos[f:f + 1], fvel=ch.vel[f:f + 1], hidden=ch.hidden[f:f + 1],
+                           mouth=np.array([-999.0, -999.0])), f,
                  ramp=R("3a4466", "733e39", "c28569", "e8b796"))
         draw_bubbles(img, f, bubbles)
         img[fmask] = fimg[fmask]
@@ -1044,7 +1225,8 @@ def main():
         streak, contrib = activity(today)
     day = Day(today, streak, contrib, os.environ.get("EVENT"))
     build(day)
-    print(f"{today}: {day.label().lower()} ({day.season}) -> {OUT}")
+    print(f"{today}: {day.label().lower()} ({day.season}, {day.route}, {day.pattern}, {F} frames"
+          f"{', beetle' if day.bug is not None else ''}{', tail slap' if day.slap is not None else ''}) -> {OUT}")
 
 
 if __name__ == "__main__":
