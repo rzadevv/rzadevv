@@ -9,5 +9,5 @@ I like Table Tennis 🏓
 Based in Dresden, Germany. [Say hi](mailto:rzamirzayevedu@gmail.com).
 
 <p align="center">
-  <img src="fish/fish-202611131443.gif" width="800" alt="A pixel-art fish hunting fry in a pond. It grows with my contribution streak.">
+  <img src="fish/fish-202611131449.gif" width="800" alt="A pixel-art fish hunting fry in a pond. It grows with my contribution streak.">
 </p>
