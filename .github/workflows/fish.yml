@@ -1,0 +1,40 @@
+# Redraws fish/fish.gif every day, like the koi: a new colour morph and stripe
+# pattern each day, and one fry in the school per push you made yesterday.
+name: Fish
+
+on:
+  schedule:
+    - cron: "40 0 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/fish.yml, fish/fish.py]
+
+permissions:
+  contents: write
+
+concurrency: fish
+
+jobs:
+  draw:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet pillow numpy
+      - name: Draw today's fish
+        env:
+          GH_USER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ github.token }}
+        run: python fish/fish.py
+      - name: Commit if it changed
+        run: |
+          git add fish/fish.gif
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --quiet -m "fish: today's hunt"
+          git pull --rebase --quiet
+          git push --quiet
